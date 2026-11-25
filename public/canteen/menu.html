@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Canteen Menu - uniflow</title>
+<link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <a href="/index.html">&larr; uniflow</a>
+    <span>Canteen</span>
+  </div>
+  <div class="container">
+    <h1>Canteen Menu</h1>
+    <p class="muted">Order now, pick up with a QR code — no queue.</p>
+
+    <div class="card">
+      <h2>Menu</h2>
+      <div class="menu-category-tabs" role="tablist" aria-label="Menu categories">
+        <button class="menu-category-tab active" data-category="Food & Meals" role="tab" aria-selected="true">
+          Food &amp; Meals
+        </button>
+        <button class="menu-category-tab" data-category="Snacks & Beverages" role="tab" aria-selected="false">
+          Snacks &amp; Beverages
+        </button>
+      </div>
+      <div id="menuList">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Your Cart</h2>
+      <p class="muted">Your cart is saved on this device, even if you leave this page.</p>
+      <div id="cartList" class="muted">Cart is empty</div>
+      <div style="display:flex; justify-content:space-between; margin-top:12px; font-weight:600;">
+        <span>Total</span>
+        <span id="cartTotal">₹0</span>
+      </div>
+      <div id="orderError" class="error"></div>
+      <button class="btn" id="placeOrderBtn" style="width:100%; margin-top:12px;" disabled>
+        Place Order
+      </button>
+    </div>
+  </div>
+
+  <script src="/shared/auth.js"></script>
+  <script>
+    Kahe.requireLogin();
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+
+    let menuItems = [];
+    let activeCategory = 'Food & Meals';
+
+    // Cart survives navigating away/back and page reloads. One cart per user.
+    const user = Kahe.getUser();
+    const cartKey = `kahe_cart_${user ? user.id : 'guest'}`;
+    function loadCart() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(cartKey) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch (err) {
+        return {};
+      }
+    }
+    function saveCart() {
+      localStorage.setItem(cartKey, JSON.stringify(cart));
+    }
+    const cart = loadCart(); // menuItemId -> qty
+
+    function renderMenu() {
+      const el = document.getElementById('menuList');
+      el.innerHTML = '';
+      const categoryItems = menuItems.filter(item => item.category === activeCategory);
+      if (categoryItems.length === 0) {
+        el.innerHTML = '<p class="muted">No items are available in this category right now.</p>';
+        return;
+      }
+      categoryItems.forEach(item => {
+        const qty = cart[item.id] || 0;
+        const row = document.createElement('div');
+        row.className = 'menu-item';
+        row.innerHTML = `
+          <div>
+            <div>${escapeHtml(item.name)}</div>
+            <div class="muted">₹${item.price}</div>
+            ${item.stock_quantity !== null ? `<div class="muted">Available: ${item.stock_quantity}</div>` : ''}
+          </div>
+          <div class="qty-controls">
+            <button data-action="dec" data-id="${item.id}">-</button>
+            <span>${qty}</span>
+            <button data-action="inc" data-id="${item.id}">+</button>
+          </div>
+        `;
+        el.appendChild(row);
+      });
+    }
+
+    function renderCart() {
+      const el = document.getElementById('cartList');
+      const ids = Object.keys(cart).filter(id => cart[id] > 0);
+      if (ids.length === 0) {
+        el.innerHTML = '<span class="muted">Cart is empty</span>';
+        document.getElementById('placeOrderBtn').disabled = true;
+        document.getElementById('cartTotal').textContent = '₹0';
+        return;
+      }
+      let total = 0;
+      el.innerHTML = '';
+      ids.forEach(id => {
+        const item = menuItems.find(m => m.id == id);
+        const qty = cart[id];
+        total += item.price * qty;
+        const row = document.createElement('div');
+        row.className = 'cart-item';
+        row.innerHTML = `<span>${escapeHtml(item.name)} x${qty}</span><span>₹${item.price * qty}</span>`;
+        el.appendChild(row);
+      });
+      document.getElementById('cartTotal').textContent = `₹${total}`;
+      document.getElementById('placeOrderBtn').disabled = false;
+    }
+
+    document.getElementById('menuList').addEventListener('click', (e) => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const action = btn.dataset.action;
+      const current = cart[id] || 0;
+      const item = menuItems.find(menuItem => menuItem.id == id);
+      const max = item && item.stock_quantity !== null ? item.stock_quantity : Infinity;
+      cart[id] = action === 'inc' ? Math.min(max, current + 1) : Math.max(0, current - 1);
+      saveCart();
+      renderMenu();
+      renderCart();
+    });
+
+    document.querySelectorAll('.menu-category-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        activeCategory = tab.dataset.category;
+        document.querySelectorAll('.menu-category-tab').forEach(button => {
+          const isActive = button === tab;
+          button.classList.toggle('active', isActive);
+          button.setAttribute('aria-selected', String(isActive));
+        });
+        renderMenu();
+      });
+    });
+
+    document.getElementById('placeOrderBtn').addEventListener('click', async () => {
+      const errorEl = document.getElementById('orderError');
+      errorEl.textContent = '';
+      const items = Object.keys(cart)
+        .filter(id => cart[id] > 0)
+        .map(id => ({ menuItemId: Number(id), qty: cart[id] }));
+
+      try {
+        const data = await Kahe.api('/api/canteen/orders', {
+          method: 'POST',
+          body: JSON.stringify({ items })
+        });
+        localStorage.removeItem(cartKey); // order placed: start with a fresh cart
+        window.location.href = `/canteen/checkout.html?orderId=${data.orderId}`;
+      } catch (err) {
+        errorEl.textContent = err.message;
+      }
+    });
+
+    (async function init() {
+      try {
+        const data = await Kahe.api('/api/canteen/menu');
+        menuItems = data.items;
+        // Drop anything that sold out or was edited since the page loaded.
+        for (const id of Object.keys(cart)) {
+          const item = menuItems.find(menuItem => menuItem.id == id);
+          if (!item || (item.stock_quantity !== null && cart[id] > item.stock_quantity)) delete cart[id];
+        }
+        saveCart();
+        renderMenu();
+        renderCart();
+      } catch (err) {
+        const errorEl = document.createElement('span');
+        errorEl.className = 'error';
+        errorEl.textContent = err.message;
+        document.getElementById('menuList').replaceChildren(errorEl);
+      }
+    })();
+  </script>
+</body>
+</html>

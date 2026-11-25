@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Tracking - uniflow</title>
+<link rel="stylesheet" href="/shared/style.css">
+<style>
+  body.bus-page { background: #f4f8fd; color: #172033; }
+  .bus-topbar {
+    background: linear-gradient(115deg, #123a77, #2563eb 58%, #1d78ad);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .bus-topbar a { color: #f2f3f7; text-decoration: none; font-size: 1.2rem; }
+  .bus-topbar .title { font-weight: 700; font-size: 1.05rem; }
+  .bus-topbar .subtitle { font-size: 0.75rem; color: #dbeafe; }
+
+  .bus-select-row {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    overflow-x: auto;
+  }
+  .bus-chip {
+    border: 1px solid #dce5f1;
+    background: #ffffff;
+    color: #38506f;
+    border-radius: 999px;
+    padding: 8px 18px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .bus-chip.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: white;
+  }
+
+  .timeline-wrap { padding: 4px 16px 100px 16px; }
+
+  .stop-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    padding-left: 26px;
+    min-height: 72px;
+  }
+  .stop-row .track-line {
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #dbe5f1;
+  }
+  .stop-row:first-child .track-line { top: 10px; }
+  .stop-row:last-child .track-line { bottom: calc(100% - 10px); }
+
+  .stop-dot {
+    position: absolute;
+    left: 0;
+    top: 6px;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #f4f8fd;
+    border: 3px solid #cbd8e8;
+    z-index: 2;
+  }
+  .stop-dot.passed { border-color: #2563eb; background: #2563eb; }
+  .stop-dot.final.passed { border-color: #16a34a; background: #16a34a; }
+  .stop-dot.current {
+    border-color: #f59e0b;
+    background: #f59e0b;
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.25);
+  }
+
+  .stop-main {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 18px;
+    border-bottom: 1px solid #e0e8f2;
+  }
+  .stop-info { padding-left: 12px; }
+  .stop-name { font-weight: 600; font-size: 0.95rem; font-style: italic; }
+  .stop-meta { font-size: 0.78rem; color: #71809a; margin-top: 2px; }
+
+  .stop-times { text-align: right; padding-left: 8px; }
+  .stop-time-sched { font-weight: 700; font-size: 0.9rem; color: #273c59; }
+  .stop-time-live { font-size: 0.85rem; color: #f26b5c; margin-top: 2px; }
+
+  .bus-live-badge {
+    position: absolute;
+    left: -6px;
+    font-size: 1.1rem;
+    z-index: 3;
+  }
+
+  .status-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(255,255,255,.96);
+    padding: 14px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid #dce5f1;
+    box-shadow: 0 -5px 18px rgba(25, 61, 112, .08);
+  }
+  .status-footer .loc { color: #f26b5c; font-weight: 700; font-size: 0.95rem; }
+  .status-footer .updated { color: #71809a; font-size: 0.75rem; margin-top: 2px; }
+  .refresh-btn {
+    background: #e7eff9;
+    border: none;
+    color: #2563eb;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    font-size: 1.1rem;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body class="bus-page">
+  <div class="bus-topbar">
+    <a href="/index.html">&larr;</a>
+    <div>
+      <div class="title" id="routeTitle">Bus Tracking</div>
+      <div class="subtitle" id="routeSubtitle">Loading...</div>
+    </div>
+  </div>
+
+  <div class="bus-select-row" id="busSelectRow"></div>
+
+  <div class="timeline-wrap" id="timeline"></div>
+
+  <div class="status-footer">
+    <div>
+      <div class="loc" id="footerLoc">—</div>
+      <div class="updated" id="footerUpdated">—</div>
+    </div>
+    <button class="refresh-btn" id="refreshBtn">&#8635;</button>
+  </div>
+
+  <script src="/shared/auth.js"></script>
+  <script>
+    Kahe.requireLogin();
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+
+    let buses = [];
+    let selectedId = null;
+    let lastUpdatedAt = null;
+
+    function renderSelector() {
+      const row = document.getElementById('busSelectRow');
+      row.innerHTML = buses.map(b => `
+        <button class="bus-chip ${b.id === selectedId ? 'active' : ''}" data-id="${b.id}">
+          ${escapeHtml(b.busNumber)}
+        </button>
+      `).join('');
+      row.querySelectorAll('.bus-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          selectedId = Number(btn.dataset.id);
+          renderSelector();
+          renderDetail();
+        });
+      });
+    }
+
+    function renderDetail() {
+      const bus = buses.find(b => b.id === selectedId);
+      if (!bus) return;
+
+      document.getElementById('routeTitle').textContent = `${bus.busNumber} - ${bus.routeName}`;
+      document.getElementById('routeSubtitle').textContent =
+        bus.delayMinutes > 0 ? `Running ~${bus.delayMinutes} min behind schedule` : 'On schedule';
+      // textContent above is safe; the template strings below are escaped.
+
+      const maxIndex = bus.stops.length - 1;
+      const timeline = document.getElementById('timeline');
+      timeline.innerHTML = bus.stops.map((stop, idx) => {
+        const isFinal = idx === maxIndex;
+        const isCurrent = idx === bus.currentStopIndex && bus.position < maxIndex;
+        return `
+          <div class="stop-row">
+            <div class="track-line"></div>
+            <div class="stop-dot ${stop.passed ? 'passed' : ''} ${isFinal ? 'final' : ''} ${isCurrent ? 'current' : ''}"></div>
+            ${isCurrent ? '<div class="bus-live-badge">🚌</div>' : ''}
+            <div class="stop-main">
+              <div class="stop-info">
+                <div class="stop-name">${escapeHtml(stop.stopName)}</div>
+                <div class="stop-meta">${escapeHtml(stop.distanceKm)} km</div>
+              </div>
+              <div class="stop-times">
+                <div class="stop-time-sched">${escapeHtml(stop.scheduledTime)}</div>
+                <div class="stop-time-live">${escapeHtml(stop.liveTime)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('footerLoc').textContent = bus.status; // textContent is safe
+    }
+
+    function renderUpdatedAgo() {
+      if (!lastUpdatedAt) return;
+      const secs = Math.round((Date.now() - lastUpdatedAt) / 1000);
+      const label = secs < 5 ? 'just now' : `Updated ${secs}s ago`;
+      document.getElementById('footerUpdated').textContent = label;
+    }
+
+    async function load() {
+      try {
+        const data = await Kahe.api('/api/bus');
+        buses = data.buses;
+        if (selectedId === null && buses.length > 0) {
+          selectedId = buses[0].id;
+        }
+        lastUpdatedAt = Date.now();
+        renderSelector();
+        renderDetail();
+        renderUpdatedAgo();
+      } catch (err) {
+        const errorEl = document.createElement('span');
+        errorEl.className = 'error';
+        errorEl.textContent = err.message;
+        document.getElementById('timeline').replaceChildren(errorEl);
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', load);
+
+    load();
+    setInterval(load, 5000);
+    setInterval(renderUpdatedAgo, 1000);
+  </script>
+</body>
+</html>

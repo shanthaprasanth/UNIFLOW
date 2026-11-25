@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Orders -uniflow</title>
+<link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <a href="/index.html">&larr; uniflow</a>
+    <span>My Orders</span>
+  </div>
+  <div class="container">
+    <div class="section-heading">
+      <div>
+        <h1>My Orders</h1>
+        <p class="muted">Everything you have ordered. Cancel an order any time before it is picked up.</p>
+      </div>
+      <a class="btn secondary refresh-orders" href="/canteen/menu.html">Order more</a>
+    </div>
+    <div id="ordersList">Loading...</div>
+  </div>
+
+  <script src="/shared/auth.js"></script>
+  <script>
+    Kahe.requireLogin();
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      const date = new Date(String(value).replace(' ', 'T'));
+      return Number.isFinite(date.getTime())
+        ? date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+        : escapeHtml(value);
+    }
+
+    function render(orders) {
+      const list = document.getElementById('ordersList');
+      if (orders.length === 0) {
+        list.innerHTML = '<div class="card"><p class="muted">You have not placed any orders yet.</p><a class="btn" href="/canteen/menu.html">Browse the menu</a></div>';
+        return;
+      }
+
+      list.innerHTML = orders.map(order => {
+        const items = order.items.map(item =>
+          `<div class="cart-item"><span>${escapeHtml(item.name)} × ${escapeHtml(item.qty)}</span><span>₹${escapeHtml(item.price_each * item.qty)}</span></div>`
+        ).join('') || '<p class="muted">No items</p>';
+
+        const details = [];
+        if (order.paid_at) details.push(`Paid: ${formatDate(order.paid_at)}`);
+        if (order.expires_at && order.status === 'paid') details.push(`Pickup by: ${formatDate(order.expires_at)}`);
+        if (order.picked_up_at) details.push(`Picked up: ${formatDate(order.picked_up_at)}`);
+        if (order.cancelled_at) details.push(`Cancelled: ${formatDate(order.cancelled_at)}`);
+
+        const canCancel = order.status === 'pending' || order.status === 'paid';
+        const actions = [
+          order.status === 'paid'
+            ? `<a class="btn secondary" href="/canteen/checkout.html?orderId=${order.id}">View QR</a>`
+            : '',
+          canCancel
+            ? `<button class="btn danger cancel-order" data-id="${order.id}">Cancel order</button>`
+            : ''
+        ].filter(Boolean).join(' ');
+
+        return `
+          <div class="card">
+            <div class="section-heading">
+              <div><h2>Order #${order.id}</h2><p class="muted">Placed ${formatDate(order.created_at)}</p></div>
+              <span class="badge ${escapeHtml(order.status)}">${escapeHtml(order.status.replace('_', ' '))}</span>
+            </div>
+            ${items}
+            <div style="display:flex;justify-content:space-between;margin-top:12px;font-weight:700;">
+              <span>Total</span><span>₹${escapeHtml(order.total)}</span>
+            </div>
+            ${details.length ? `<p class="muted" style="margin-top:10px;">${details.join(' · ')}</p>` : ''}
+            ${actions ? `<div style="margin-top:12px;">${actions}</div>` : ''}
+          </div>`;
+      }).join('');
+
+      list.querySelectorAll('.cancel-order').forEach(button => {
+        button.addEventListener('click', () => cancelOrder(button.dataset.id));
+      });
+    }
+
+    async function load() {
+      try {
+        const { orders } = await Kahe.api('/api/canteen/my/orders');
+        render(orders);
+      } catch (err) {
+        const errorEl = document.createElement('span');
+        errorEl.className = 'error';
+        errorEl.textContent = err.message;
+        document.getElementById('ordersList').replaceChildren(errorEl);
+      }
+    }
+
+    async function cancelOrder(orderId) {
+      if (!window.confirm(`Cancel order #${orderId}? Reserved stock will be released.`)) return;
+      try {
+        await Kahe.api(`/api/canteen/orders/${orderId}/cancel`, { method: 'POST' });
+        await load();
+      } catch (err) {
+        window.alert(err.message);
+      }
+    }
+
+    load();
+    setInterval(load, 10000); // reflect pickups/cancellations made by staff
+  </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Local configuration and secrets
+.env
+
+# SQLite database files (demo data, not source)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Editors / OS
+.DS_Store
+*.swp

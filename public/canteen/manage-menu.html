@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage Menu - uniflow</title>
+<link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+  <div class="topbar"><a href="/index.html">&larr; uniflow</a><span>Manage Canteen Menu</span></div>
+  <div class="container">
+    <div class="card">
+      <h1 id="formTitle">Add Menu Item</h1>
+      <input id="itemName" placeholder="Item name">
+      <input id="itemPrice" type="number" min="0" step="1" placeholder="Price in ₹">
+      <select id="itemCategory">
+        <option>Food &amp; Meals</option>
+        <option>Snacks &amp; Beverages</option>
+      </select>
+      <input id="itemStock" type="number" min="0" step="1" value="15" placeholder="Available quantity (leave blank for no limit)">
+      <p class="muted">Food &amp; Meals start with 15 portions. Leave quantity blank if an item does not need a stock limit.</p>
+      <div id="formError" class="error"></div>
+      <button class="btn" id="saveBtn">Add Item</button>
+      <button class="btn secondary" id="cancelBtn" style="display:none; margin-left:8px;">Cancel Edit</button>
+    </div>
+    <div class="card"><h2>Current Menu</h2><div id="menuList">Loading...</div></div>
+  </div>
+  <script src="/shared/auth.js"></script>
+  <script>
+    Kahe.requireLogin();
+    const user = Kahe.getUser();
+    if (!user || !['staff', 'admin'].includes(user.role)) {
+      document.body.innerHTML = '<div class="container"><div class="card error">Staff access only.</div></div>';
+      throw new Error('unauthorized');
+    }
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+    let items = [];
+    let editingId = null;
+    const fields = { name: document.getElementById('itemName'), price: document.getElementById('itemPrice'), category: document.getElementById('itemCategory'), stock: document.getElementById('itemStock') };
+    function resetForm() {
+      editingId = null; fields.name.value = ''; fields.price.value = ''; fields.category.value = 'Food & Meals'; fields.stock.value = '15';
+      document.getElementById('formTitle').textContent = 'Add Menu Item'; document.getElementById('saveBtn').textContent = 'Add Item'; document.getElementById('cancelBtn').style.display = 'none';
+    }
+    function render() {
+      document.getElementById('menuList').innerHTML = items.map(item => `<div class="staff-order"><div class="staff-order-main"><strong>${escapeHtml(item.name)}</strong><span class="muted">${escapeHtml(item.category)} · ₹${escapeHtml(item.price)}</span><span class="muted">${item.stock_quantity === null ? 'No stock limit' : `Available: ${escapeHtml(item.stock_quantity)}`}</span></div><button class="btn secondary edit-item" data-id="${item.id}">Edit</button></div>`).join('') || '<p class="muted">No menu items yet.</p>';
+      document.querySelectorAll('.edit-item').forEach(button => button.addEventListener('click', () => {
+        const item = items.find(menuItem => menuItem.id === Number(button.dataset.id));
+        editingId = item.id; fields.name.value = item.name; fields.price.value = item.price; fields.category.value = item.category; fields.stock.value = item.stock_quantity ?? '';
+        document.getElementById('formTitle').textContent = `Edit ${item.name}`; document.getElementById('saveBtn').textContent = 'Save Changes'; document.getElementById('cancelBtn').style.display = 'inline-flex'; window.scrollTo({ top: 0, behavior: 'smooth' });
+      }));
+    }
+    async function load() { const data = await Kahe.api('/api/canteen/staff/menu'); items = data.items; render(); }
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const error = document.getElementById('formError'); error.textContent = '';
+      const body = JSON.stringify({ name: fields.name.value, price: fields.price.value, category: fields.category.value, stockQuantity: fields.stock.value });
+      try { await Kahe.api(editingId ? `/api/canteen/staff/menu/${editingId}` : '/api/canteen/staff/menu', { method: editingId ? 'PATCH' : 'POST', body }); resetForm(); load(); } catch (err) { error.textContent = err.message; }
+    });
+    document.getElementById('cancelBtn').addEventListener('click', resetForm);
+    fields.category.addEventListener('change', () => { if (!editingId) fields.stock.value = fields.category.value === 'Food & Meals' ? '15' : ''; });
+    load().catch(err => {
+      const errorEl = document.createElement('p');
+      errorEl.className = 'error';
+      errorEl.textContent = err.message;
+      document.getElementById('menuList').replaceChildren(errorEl);
+    });
+  </script>
+</body>
+</html>

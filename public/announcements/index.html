@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Announcements - uniflow</title>
+<link rel="stylesheet" href="/shared/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <a href="/index.html">&larr; uniflow</a>
+    <span>Announcements</span>
+  </div>
+  <div class="container">
+    <h1>Announcements</h1>
+
+    <div class="card" id="postCard" style="display:none;">
+      <h2>Post an announcement</h2>
+      <input id="annTitle" placeholder="Title" maxlength="120">
+      <textarea id="annBody" placeholder="Message" maxlength="2000" rows="4" style="width:100%;min-height:100px;margin-bottom:12px;padding:11px 13px;border:1px solid #d8e1ef;border-radius:11px;font:.95rem 'DM Sans',sans-serif;"></textarea>
+      <div id="postError" class="error"></div>
+      <button class="btn" id="postBtn">Post</button>
+    </div>
+
+    <div id="list">Loading...</div>
+  </div>
+
+  <script src="/shared/auth.js"></script>
+  <script>
+    Kahe.requireLogin();
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[character]));
+    }
+
+    const user = Kahe.getUser();
+    if (user && (user.role === 'staff' || user.role === 'admin')) {
+      document.getElementById('postCard').style.display = 'block';
+    }
+
+    async function load() {
+      const el = document.getElementById('list');
+      try {
+        const { items } = await Kahe.api('/api/announcements');
+        if (items.length === 0) {
+          el.innerHTML = '<p class="muted">No announcements yet.</p>';
+          return;
+        }
+        el.innerHTML = items.map(a => `
+          <div class="card">
+            <h2>${escapeHtml(a.title)}</h2>
+            <p>${escapeHtml(a.body)}</p>
+            <p class="muted">${escapeHtml(a.posted_by)} — ${escapeHtml(a.created_at)}</p>
+          </div>
+        `).join('');
+      } catch (err) {
+        const errorEl = document.createElement('span');
+        errorEl.className = 'error';
+        errorEl.textContent = err.message;
+        el.replaceChildren(errorEl);
+      }
+    }
+
+    document.getElementById('postBtn').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const errorEl = document.getElementById('postError');
+      errorEl.textContent = '';
+      button.disabled = true;
+      try {
+        await Kahe.api('/api/announcements', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: document.getElementById('annTitle').value,
+            body: document.getElementById('annBody').value
+          })
+        });
+        document.getElementById('annTitle').value = '';
+        document.getElementById('annBody').value = '';
+        await load();
+      } catch (err) {
+        errorEl.textContent = err.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    load();
+  </script>
+</body>
+</html>
